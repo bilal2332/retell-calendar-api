@@ -5,7 +5,6 @@ from flask import Flask, request, jsonify
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
-from dateutil import parser as dateutil_parser
 import pytz
 
 app = Flask(__name__)
@@ -27,20 +26,30 @@ def home():
 @app.route('/book_appointment', methods=['POST'])
 def book_appointment():
     try:
-        data = request.get_json(force=True, silent=True) or {}
-        app.logger.info(f"RAW DATA: {data}")
+        payload = request.get_json(force=True, silent=True) or {}
+        data = payload.get('args', payload)
+        app.logger.info(f"DATA: {data}")
 
-        name       = str(data.get('name', 'Guest'))
-        date_str   = str(data.get('date') or '')
-time_str   = str(data.get('time') or '')
-app.logger.info(f"FULL DATA RECEIVED: {json.dumps(data)}")
+        name = str(data.get('name', 'Guest'))
+        date_str = str(data.get('date', ''))
+        time_str = str(data.get('time', ''))
         party_size = data.get('party_size', 1)
-        phone      = str(data.get('phone', ''))
+        phone = str(data.get('phone', ''))
 
-        app.logger.info(f"name={name} date={date_str} time={time_str}")
+        dt_str = f"{date_str} {time_str}"
+        formats = ['%Y-%m-%d %I:%M %p', '%Y-%m-%d %H:%M', '%Y-%m-%d %I:%M%p']
+        dt = None
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(dt_str.strip(), fmt)
+                break
+            except ValueError:
+                continue
+
+        if dt is None:
+            return jsonify({"success": False, "message": f"Could not parse: {dt_str}"}), 400
 
         tz = pytz.timezone('America/Chicago')
-        dt = dateutil_parser.parse(f"{date_str} {time_str}")
         dt_start = tz.localize(dt)
         dt_end = dt_start + timedelta(hours=1)
 
@@ -48,17 +57,12 @@ app.logger.info(f"FULL DATA RECEIVED: {json.dumps(data)}")
             'summary': f'Reservation - {name} (Party of {party_size})',
             'description': f'Name: {name}\nParty size: {party_size}\nPhone: {phone}',
             'start': {'dateTime': dt_start.isoformat(), 'timeZone': 'America/Chicago'},
-            'end':   {'dateTime': dt_end.isoformat(), 'timeZone': 'America/Chicago'},
+            'end': {'dateTime': dt_end.isoformat(), 'timeZone': 'America/Chicago'},
         }
 
         service = get_calendar_service()
         created = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
-        app.logger.info(f"Event created: {created.get('htmlLink')}")
-
-        return jsonify({
-            "success": True,
-            "message": f"Booking confirmed for {name} on {date_str} at {time_str} for {party_size} guests."
-        })
+        return jsonify({"success": True, "message": f"Booking confirmed for {name} on {date_str} at {time_str} for {party_size} guests."})
 
     except Exception as e:
         app.logger.error(f"ERROR: {str(e)}", exc_info=True)
