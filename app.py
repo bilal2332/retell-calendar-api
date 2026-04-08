@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
+from dateutil import parser as dateutil_parser
 import pytz
 
 app = Flask(__name__)
@@ -27,7 +28,7 @@ def home():
 def book_appointment():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        app.logger.info(f"Data received: {data}")
+        app.logger.info(f"RAW DATA: {data}")
 
         name       = str(data.get('name', 'Guest'))
         date_str   = str(data.get('date', ''))
@@ -35,22 +36,18 @@ def book_appointment():
         party_size = data.get('party_size', 1)
         phone      = str(data.get('phone', ''))
 
-        tz = pytz.timezone('America/Chicago')
+        app.logger.info(f"name={name} date={date_str} time={time_str}")
 
-               # Parse time using dateutil (handles any format)
-        from dateutil import parser as dateutil_parser
-        try:
-            dt = dateutil_parser.parse(f"{date_str} {time_str}".strip())
-        except Exception:
-            return jsonify({"success": False, "message": f"Could not parse date/time: {date_str} {time_str}"}), 400
+        tz = pytz.timezone('America/Chicago')
+        dt = dateutil_parser.parse(f"{date_str} {time_str}")
         dt_start = tz.localize(dt)
-        dt_end   = dt_start + timedelta(hours=1)
+        dt_end = dt_start + timedelta(hours=1)
 
         event = {
             'summary': f'Reservation - {name} (Party of {party_size})',
             'description': f'Name: {name}\nParty size: {party_size}\nPhone: {phone}',
             'start': {'dateTime': dt_start.isoformat(), 'timeZone': 'America/Chicago'},
-            'end':   {'dateTime': dt_end.isoformat(),   'timeZone': 'America/Chicago'},
+            'end':   {'dateTime': dt_end.isoformat(), 'timeZone': 'America/Chicago'},
         }
 
         service = get_calendar_service()
@@ -63,12 +60,12 @@ def book_appointment():
         })
 
     except Exception as e:
-        app.logger.error(f"BOOKING ERROR: {str(e)}", exc_info=True)
+        app.logger.error(f"ERROR: {str(e)}", exc_info=True)
         return jsonify({"success": False, "message": str(e)}), 500
 
 @app.route('/check_availability', methods=['POST'])
 def check_availability():
-    return jsonify({"available": True, "message": "We have availability. What date and time works for you?"})
+    return jsonify({"available": True, "message": "We have availability. What date works for you?"})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
