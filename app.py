@@ -7,7 +7,7 @@ import json, os
 app = Flask(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
-CALENDAR_ID = 'YOUR_GOOGLE_CALENDAR_ID_HERE'  # e.g. your Gmail address
+CALENDAR_ID = 'chbilal.2332@gmail.com'  # e.g. your Gmail address
 
 def get_calendar_service():
     creds_json = os.environ.get('GOOGLE_CREDENTIALS')
