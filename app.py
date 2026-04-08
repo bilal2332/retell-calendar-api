@@ -31,8 +31,9 @@ def book_appointment():
         app.logger.info(f"RAW DATA: {data}")
 
         name       = str(data.get('name', 'Guest'))
-        date_str   = str(data.get('date', ''))
-        time_str   = str(data.get('time', ''))
+        date_str   = str(data.get('date') or '')
+time_str   = str(data.get('time') or '')
+app.logger.info(f"FULL DATA RECEIVED: {json.dumps(data)}")
         party_size = data.get('party_size', 1)
         phone      = str(data.get('phone', ''))
 
