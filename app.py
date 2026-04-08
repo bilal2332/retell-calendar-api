@@ -37,18 +37,12 @@ def book_appointment():
 
         tz = pytz.timezone('America/Chicago')
 
-        # Try multiple time formats
-        dt = None
-        for fmt in ["%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M%p"]:
-            try:
-                dt = datetime.strptime(f"{date_str} {time_str}", fmt)
-                break
-            except ValueError:
-                continue
-
-        if dt is None:
+               # Parse time using dateutil (handles any format)
+        from dateutil import parser as dateutil_parser
+        try:
+            dt = dateutil_parser.parse(f"{date_str} {time_str}".strip())
+        except Exception:
             return jsonify({"success": False, "message": f"Could not parse date/time: {date_str} {time_str}"}), 400
-
         dt_start = tz.localize(dt)
         dt_end   = dt_start + timedelta(hours=1)
 
