@@ -1,79 +1,81 @@
-from flask import Flask, request, jsonify
 import os
 import json
-from datetime import datetime, timedelta
-from google.oauth2.credentials import Credentials
+import logging
+from flask import Flask, request, jsonify
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from datetime import datetime, timedelta
+import pytz
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
+CALENDAR_ID = 'chbilal.2332@gmail.com'
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_calendar_service():
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
-    if not creds_json:
-        raise Exception("GOOGLE_CREDENTIALS environment variable not set")
-    
-    creds_data = json.loads(creds_json)
-    
-    creds = Credentials(
-        token=creds_data.get("token"),
-        refresh_token=creds_data.get("refresh_token"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=creds_data.get("client_id"),
-        client_secret=creds_data.get("client_secret"),
-        scopes=["https://www.googleapis.com/auth/calendar"]
-    )
-    
-    service = build("calendar", "v3", credentials=creds)
-    return service
+    creds_raw = os.environ.get('GOOGLE_CREDENTIALS', '')
+    creds_dict = json.loads(creds_raw)
+    creds = service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
+    return build('calendar', 'v3', credentials=creds)
 
-@app.route("/")
-def health():
+@app.route('/')
+def home():
     return jsonify({"status": "ok"})
 
-@app.route("/book_appointment", methods=["POST"])
+@app.route('/book_appointment', methods=['POST'])
 def book_appointment():
     try:
-        data = request.json
-        calendar_id = data.get("calendar_id", "primary")
-        date = data.get("date")
-        time = data.get("time")
-        duration = data.get("duration", 60)
-        caller_name = data.get("caller_name", "Patient")
-        caller_phone = data.get("caller_phone", "")
-        notes = data.get("notes", "")
+        data = request.get_json(force=True, silent=True) or {}
+        app.logger.info(f"Data received: {data}")
 
-        start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
-        end_dt = start_dt + timedelta(minutes=int(duration))
+        name       = str(data.get('name', 'Guest'))
+        date_str   = str(data.get('date', ''))
+        time_str   = str(data.get('time', ''))
+        party_size = data.get('party_size', 1)
+        phone      = str(data.get('phone', ''))
+
+        tz = pytz.timezone('America/Chicago')
+
+        # Try multiple time formats
+        dt = None
+        for fmt in ["%Y-%m-%d %I:%M %p", "%Y-%m-%d %H:%M", "%Y-%m-%d %I:%M%p"]:
+            try:
+                dt = datetime.strptime(f"{date_str} {time_str}", fmt)
+                break
+            except ValueError:
+                continue
+
+        if dt is None:
+            return jsonify({"success": False, "message": f"Could not parse date/time: {date_str} {time_str}"}), 400
+
+        dt_start = tz.localize(dt)
+        dt_end   = dt_start + timedelta(hours=1)
 
         event = {
-            "summary": f"Appointment - {caller_name}",
-            "description": f"Phone: {caller_phone}\nNotes: {notes}",
-            "start": {
-                "dateTime": start_dt.isoformat(),
-                "timeZone": "America/Chicago"
-            },
-            "end": {
-                "dateTime": end_dt.isoformat(),
-                "timeZone": "America/Chicago"
-            }
+            'summary': f'Reservation - {name} (Party of {party_size})',
+            'description': f'Name: {name}\nParty size: {party_size}\nPhone: {phone}',
+            'start': {'dateTime': dt_start.isoformat(), 'timeZone': 'America/Chicago'},
+            'end':   {'dateTime': dt_end.isoformat(),   'timeZone': 'America/Chicago'},
         }
 
         service = get_calendar_service()
-        created_event = service.events().insert(
-            calendarId=calendar_id,
-            body=event
-        ).execute()
+        created = service.events().insert(calendarId=CALENDAR_ID, body=event).execute()
+        app.logger.info(f"Event created: {created.get('htmlLink')}")
 
         return jsonify({
             "success": True,
-            "event_id": created_event["id"],
-            "event_link": created_event.get("htmlLink", ""),
-            "message": f"Appointment booked for {caller_name} on {date} at {time}"
+            "message": f"Booking confirmed for {name} on {date_str} at {time_str} for {party_size} guests."
         })
 
     except Exception as e:
+        app.logger.error(f"BOOKING ERROR: {str(e)}", exc_info=True)
         return jsonify({"success": False, "message": str(e)}), 500
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+@app.route('/check_availability', methods=['POST'])
+def check_availability():
+    return jsonify({"available": True, "message": "We have availability. What date and time works for you?"})
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 10000))
+    app.run(host='0.0.0.0', port=port)
