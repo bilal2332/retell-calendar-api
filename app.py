@@ -30,14 +30,13 @@ def check_availability():
         data = payload.get('args', payload)
 
         calendar_id = str(data.get('calendar_id', '')).strip()
-        date = str(data.get('date', '')).strip()  # Format: YYYY-MM-DD
+        date = str(data.get('date', '')).strip()
 
         if not calendar_id or not date:
             return jsonify({"success": False, "message": "calendar_id and date are required"}), 400
 
         service = get_calendar_service()
 
-        # Get all events for the requested date
         start = f"{date}T00:00:00Z"
         end = f"{date}T23:59:59Z"
 
@@ -74,9 +73,9 @@ def book_appointment():
         data = payload.get('args', payload)
 
         calendar_id = str(data.get('calendar_id', '')).strip()
-        date = str(data.get('date', '')).strip()        # Format: YYYY-MM-DD
-        time = str(data.get('time', '')).strip()        # Format: HH:MM (24hr)
-        duration = int(data.get('duration', 60))        # Minutes, default 60
+        date = str(data.get('date', '')).strip()
+        time = str(data.get('time', '')).strip()
+        duration = int(data.get('duration', 60))
         caller_name = str(data.get('caller_name', 'Unknown'))
         caller_phone = str(data.get('caller_phone', ''))
         notes = str(data.get('notes', ''))
