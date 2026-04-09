@@ -1,7 +1,7 @@
 import os
 import json
-import time
 import logging
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -9,58 +9,110 @@ from googleapiclient.discovery import build
 app = Flask(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets.readonly']
-
-# In-memory cache — one entry per sheet_id
-_cache = {}
-CACHE_TTL = 60  # seconds
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def get_credentials():
     creds_raw = os.environ.get('GOOGLE_CREDENTIALS', '')
     creds_dict = json.loads(creds_raw)
     return service_account.Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
 
-def get_sheets_data(sheet_id):
-    now = time.time()
-    if sheet_id in _cache and (now - _cache[sheet_id]["timestamp"]) < CACHE_TTL:
-        return _cache[sheet_id]["data"]
-
-    sheets = build('sheets', 'v4', credentials=get_credentials())
-    result = sheets.spreadsheets().values().get(
-        spreadsheetId=sheet_id,
-        range='Sheet1!A:B'
-    ).execute()
-
-    rows = result.get('values', [])
-    info = {}
-    for row in rows[1:]:
-        if len(row) >= 2:
-            info[row[0].strip().lower()] = row[1].strip()
-
-    _cache[sheet_id] = {"data": info, "timestamp": now}
-    return info
+def get_calendar_service():
+    return build('calendar', 'v3', credentials=get_credentials())
 
 @app.route('/')
 def home():
     return jsonify({"status": "ok"})
 
-@app.route('/lookup_info', methods=['POST'])
-def lookup_info():
+@app.route('/check_availability', methods=['POST'])
+def check_availability():
     try:
         payload = request.get_json(force=True, silent=True) or {}
         data = payload.get('args', payload)
-        key = str(data.get('key', '')).strip().lower()
-        sheet_id = str(data.get('sheet_id', '')).strip()
 
-        if not sheet_id:
-            return jsonify({"success": False, "message": "sheet_id is required"}), 400
+        calendar_id = str(data.get('calendar_id', '')).strip()
+        date = str(data.get('date', '')).strip()  # Format: YYYY-MM-DD
 
-        info = get_sheets_data(sheet_id)
+        if not calendar_id or not date:
+            return jsonify({"success": False, "message": "calendar_id and date are required"}), 400
 
-        if key in info:
-            return jsonify({"success": True, "value": info[key]})
-        else:
-            return jsonify({"success": True, "value": info})
+        service = get_calendar_service()
+
+        # Get all events for the requested date
+        start = f"{date}T00:00:00Z"
+        end = f"{date}T23:59:59Z"
+
+        events_result = service.events().list(
+            calendarId=calendar_id,
+            timeMin=start,
+            timeMax=end,
+            singleEvents=True,
+            orderBy='startTime'
+        ).execute()
+
+        events = events_result.get('items', [])
+        booked_times = []
+        for event in events:
+            start_time = event['start'].get('dateTime', event['start'].get('date'))
+            end_time = event['end'].get('dateTime', event['end'].get('date'))
+            booked_times.append({"start": start_time, "end": end_time})
+
+        return jsonify({
+            "success": True,
+            "date": date,
+            "booked_slots": booked_times,
+            "total_booked": len(booked_times)
+        })
+
+    except Exception as e:
+        app.logger.error(f"ERROR: {str(e)}", exc_info=True)
+        return jsonify({"success": False, "message": str(e)}), 500
+
+@app.route('/book_appointment', methods=['POST'])
+def book_appointment():
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        data = payload.get('args', payload)
+
+        calendar_id = str(data.get('calendar_id', '')).strip()
+        date = str(data.get('date', '')).strip()        # Format: YYYY-MM-DD
+        time = str(data.get('time', '')).strip()        # Format: HH:MM (24hr)
+        duration = int(data.get('duration', 60))        # Minutes, default 60
+        caller_name = str(data.get('caller_name', 'Unknown'))
+        caller_phone = str(data.get('caller_phone', ''))
+        notes = str(data.get('notes', ''))
+
+        if not calendar_id or not date or not time:
+            return jsonify({"success": False, "message": "calendar_id, date, and time are required"}), 400
+
+        service = get_calendar_service()
+
+        start_dt = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+        end_dt = start_dt + timedelta(minutes=duration)
+
+        event = {
+            'summary': f"Appointment - {caller_name}",
+            'description': f"Phone: {caller_phone}\nNotes: {notes}",
+            'start': {
+                'dateTime': start_dt.isoformat(),
+                'timeZone': 'America/Chicago',
+            },
+            'end': {
+                'dateTime': end_dt.isoformat(),
+                'timeZone': 'America/Chicago',
+            },
+        }
+
+        created_event = service.events().insert(
+            calendarId=calendar_id,
+            body=event
+        ).execute()
+
+        return jsonify({
+            "success": True,
+            "message": f"Appointment booked for {caller_name} on {date} at {time}",
+            "event_id": created_event.get('id'),
+            "event_link": created_event.get('htmlLink')
+        })
 
     except Exception as e:
         app.logger.error(f"ERROR: {str(e)}", exc_info=True)
